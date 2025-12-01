@@ -2,5 +2,7 @@ data/*
 VQ-GAN/logs/*
 LDM/logs/*
 
+*.ckpt
 *.pyc
 *.nii.gz
+*.txt
