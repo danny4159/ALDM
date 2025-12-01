@@ -1,3 +1,6 @@
 data/*
+VQ-GAN/logs/*
+LDM/logs/*
 
 *.pyc
+*.nii.gz

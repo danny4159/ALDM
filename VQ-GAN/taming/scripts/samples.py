@@ -20,6 +20,7 @@ def save_image(x, path):
 
 @torch.no_grad()
 def run_conditional(model, dsets, outdir, source, target, batch_size=1):
+    modalities = ["t1", "t1ce", "t2", "flair"]
     if len(dsets.datasets) > 1:
         split = sorted(dsets.datasets.keys())[0]
         dset = dsets.datasets[split]
@@ -32,7 +33,14 @@ def run_conditional(model, dsets, outdir, source, target, batch_size=1):
         subject_id = example["subject_id"][0]
 
         x = model.get_input(example, source).to(model.device)
-        recon, _ = model(x, target)
+        # target: modality name -> class index tensor
+        if target not in modalities:
+            raise ValueError(f"Unknown target modality '{target}'. Choose from {modalities}.")
+        target_idx = torch.tensor([modalities.index(target)] * x.shape[0], device=model.device)
+
+        # stage 1은 label이 필요 없으므로, stage 2에서만 SPADE 조건을 넣는다.
+        use_label = getattr(model, "stage", 2) != 1
+        recon, _ = model(x, target_idx if use_label else None)
 
         recon = recon.squeeze(0)
         recon = recon.permute(1, 2, 3, 0).cpu().numpy()

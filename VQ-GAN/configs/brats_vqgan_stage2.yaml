@@ -2,8 +2,8 @@ model:
   base_learning_rate: 2e-5
   target: taming.models.vqgan.VQModel
   params:
-    num_classes: 4
-    ckpt_path: stage2.ckpt
+    num_classes: 5 # ckpt가 5-class 기준으로 학습됨
+    ckpt_path: pretrained/stage2.ckpt #null
     stage: 2
     embed_dim: 4
     n_embed: 8192
@@ -37,23 +37,35 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 4
-    num_workers: 12
+    batch_size: 1
+    num_workers: 2
     train:
       target: taming.data.brats.BraTS2021Train
       params:
-        data_path: BraTS2021/TrainingData # to be filled
+        data_path: data/BraTS2021/TrainingData
         # csv_path: 
         phase: train
+        spatial_size:
+        - 128
+        - 128
+        - 128
     validation:
       target: taming.data.brats.BraTS2021Test
       params:
-        data_path: BraTS2021/TrainingData # to be filled
+        data_path: data/BraTS2021/ValidData
         # csv_path: 
         phase: val
+        spatial_size:
+        - 128
+        - 128
+        - 128
     test:
       target: taming.data.brats.BraTS2021Test
       params:
-        data_path: BraTS2021/TrainingData # to be filled
+        data_path: data/BraTS2021/TestData
         # csv_path: 
         phase: test
+        spatial_size:
+        - 128
+        - 128
+        - 128

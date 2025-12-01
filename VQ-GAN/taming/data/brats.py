@@ -9,7 +9,7 @@ from monai import transforms
 from monai.data import Dataset as MonaiDataset
 
 
-def get_transforms(phase="train"):
+def get_transforms(phase="train", spatial_size=(144, 192, 144)):
     modalities = ["t1", "t1ce", "t2", "flair"]
 
     if phase == "train":
@@ -28,16 +28,16 @@ def get_transforms(phase="train"):
             transforms.Orientationd(keys=modalities, axcodes="RAS", allow_missing_keys=True),
             transforms.EnsureTyped(keys=modalities, allow_missing_keys=True),
             transforms.CropForegroundd(keys=modalities, source_key="t1", margin=0, allow_missing_keys=True),
-            transforms.SpatialPadd(keys=modalities, spatial_size=(144, 192, 144), allow_missing_keys=True),
-            transforms.CenterSpatialCropd(keys=modalities, roi_size=(144, 192, 144), allow_missing_keys=True),
+            transforms.SpatialPadd(keys=modalities, spatial_size=spatial_size, allow_missing_keys=True),
+            transforms.CenterSpatialCropd(keys=modalities, roi_size=spatial_size, allow_missing_keys=True),
             transforms.ScaleIntensityRangePercentilesd(keys=modalities, lower=0.5, upper=99.5, b_min=-1, b_max=1, allow_missing_keys=True),
             train_transforms if phase == "train" else transforms.Compose([])
         ]
     )
 
 
-def get_brats_dataset(data_path, csv_path=None, phase="train"):
-    transform = get_transforms(phase=phase)
+def get_brats_dataset(data_path, csv_path=None, phase="train", spatial_size=(144, 192, 144)):
+    transform = get_transforms(phase=phase, spatial_size=spatial_size)
     
     datalist = []
     if csv_path is not None:
@@ -58,11 +58,17 @@ def get_brats_dataset(data_path, csv_path=None, phase="train"):
         
         if os.path.exists(sub_path) == False: 
             continue
-
+        
+        # BraTS 2021 파일명은 언더스코어(_)를 사용한다.
         t1 = os.path.join(sub_path, f"{subject}_t1.nii.gz")
         t1ce = os.path.join(sub_path, f"{subject}_t1ce.nii.gz")
         t2 = os.path.join(sub_path, f"{subject}_t2.nii.gz")
         flair = os.path.join(sub_path, f"{subject}_flair.nii.gz")
+        # # BraTS 2024 파일명은 하이픈(-)을 사용한다.
+        # t1 = os.path.join(sub_path, f"{subject}-t1n.nii.gz")
+        # t1ce = os.path.join(sub_path, f"{subject}-t1c.nii.gz")
+        # t2 = os.path.join(sub_path, f"{subject}-t2w.nii.gz")
+        # flair = os.path.join(sub_path, f"{subject}-t2f.nii.gz")
 
         data.append({"t1":t1, "t1ce":t1ce, "t2":t2, "flair":flair, "subject_id": subject, "path": t1})
 
@@ -109,11 +115,11 @@ class BraTSbase(Brain3DBase):
 
 
 class BraTS2021Train(BraTSbase):
-    def __init__(self, data_path, csv_path=None, phase="train"):
+    def __init__(self, data_path, csv_path=None, phase="train", spatial_size=(144, 192, 144)):
         super().__init__()
-        self.data = get_brats_dataset(data_path, csv_path, phase)
+        self.data = get_brats_dataset(data_path, csv_path, phase, spatial_size)
 
 class BraTS2021Test(BraTSbase):
-    def __init__(self, data_path, csv_path=None, phase="test", source=None, target=None):
+    def __init__(self, data_path, csv_path=None, phase="test", source=None, target=None, spatial_size=(144, 192, 144)):
         super().__init__()
-        self.data = get_brats_dataset(data_path, csv_path, phase)
+        self.data = get_brats_dataset(data_path, csv_path, phase, spatial_size)
