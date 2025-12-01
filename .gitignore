@@ -1,6 +1,7 @@
 data/*
 VQ-GAN/logs/*
 LDM/logs/*
+nbs/*
 
 *.ckpt
 *.pyc

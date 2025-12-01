@@ -75,17 +75,17 @@ data:
     train:
       target: ldm.data.brats.BraTS2021Train
       params:
-        data_path: data/BraTS2021/TrainingData
+        data_path: ../data/BraTS2021/TrainingData
         phase: train
     validation:
       target: ldm.data.brats.BraTS2021Test
       params:
-        data_path: data/BraTS2021/ValidData
+        data_path: ../data/BraTS2021/ValidData
         phase: val
     test:
       target: ldm.data.brats.BraTS2021Test
       params:
-        data_path: data/BraTS2021/TestData
+        data_path: ../data/BraTS2021/TestData
         phase: test
 
 
