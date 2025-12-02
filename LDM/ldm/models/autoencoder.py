@@ -150,6 +150,7 @@ class VQModel(pl.LightningModule):
                                             last_layer=self.get_last_layer(), split="train",
                                             predicted_indices=ind)
 
+            self.log("train/total_loss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=False)
             self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return aeloss
 
@@ -157,6 +158,7 @@ class VQModel(pl.LightningModule):
             # discriminator
             discloss, log_dict_disc = self.loss(qloss, x, xrec, optimizer_idx, self.global_step,
                                             last_layer=self.get_last_layer(), split="train")
+            self.log("train/disc_total_loss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=False)
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return discloss
 
@@ -183,14 +185,14 @@ class VQModel(pl.LightningModule):
                                             predicted_indices=ind
                                             )
         rec_loss = log_dict_ae[f"val{suffix}/rec_loss"]
+        self.log(f"val{suffix}/total_loss", aeloss,
+                   prog_bar=True, logger=True, on_step=False, on_epoch=True)
         self.log(f"val{suffix}/rec_loss", rec_loss,
-                   prog_bar=True, logger=True, on_step=False, on_epoch=True, sync_dist=True)
-        self.log(f"val{suffix}/aeloss", aeloss,
-                   prog_bar=True, logger=True, on_step=False, on_epoch=True, sync_dist=True)
+                   prog_bar=True, logger=True, on_step=False, on_epoch=True)
         if version.parse(pl.__version__) >= version.parse('1.4.0'):
             del log_dict_ae[f"val{suffix}/rec_loss"]
         self.log_dict(log_dict_ae, on_step=False, on_epoch=True, logger=True, prog_bar=False)
-        self.log_dict(log_dict_disc)
+        self.log_dict(log_dict_disc, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         return self.log_dict
 
     def configure_optimizers(self):

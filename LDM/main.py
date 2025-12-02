@@ -119,6 +119,12 @@ def get_parser(**parser_kwargs):
         default=True,
         help="scale base-lr by ngpu * batch_size * n_accumulate",
     )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        default=None,
+        help="run name for log directory grouping (e.g., Ver1_...)",
+    )
     return parser
 
 
@@ -513,6 +519,15 @@ if __name__ == "__main__":
         cli = OmegaConf.from_dotlist(unknown)
         config = OmegaConf.merge(*configs, cli)
         lightning_config = config.pop("lightning", OmegaConf.create())
+        # build logdir with run_name and stage info (only when not resuming)
+        if not opt.resume:
+            run_name = opt.run_name or config.get("run_name", "default_run")
+            config["run_name"] = run_name
+            stage_dir = "synthrad_ldm"
+            session_name = nowname
+            logdir = os.path.join(opt.logdir, stage_dir, run_name, session_name)
+            ckptdir = os.path.join(logdir, "checkpoints")
+            cfgdir = os.path.join(logdir, "configs")
         # merge trainer cli with config
         trainer_config = lightning_config.get("trainer", OmegaConf.create())
         # default to ddp

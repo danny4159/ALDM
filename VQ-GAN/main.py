@@ -102,6 +102,12 @@ def get_parser(**parser_kwargs):
         default="",
         help="post-postfix for default name",
     )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        default=None,
+        help="run name for log directory grouping (e.g., Ver1_...)",
+    )
 
     return parser
 
@@ -318,7 +324,48 @@ class ImageLogger(Callback):
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
         self.log_img(pl_module, batch, batch_idx, split="val")
+    
+    
+class LossTextLogger(Callback):
+    def __init__(self, filename="losses.txt"):
+        super().__init__()
+        self.filename = filename
 
+    @rank_zero_only
+    def on_validation_epoch_end(self, trainer, pl_module):
+        log_dir = None
+        if trainer.logger is not None and hasattr(trainer.logger, "log_dir"):
+            log_dir = trainer.logger.log_dir
+        if log_dir is None:
+            log_dir = trainer.default_root_dir
+        if log_dir is None:
+            return
+        os.makedirs(log_dir, exist_ok=True)
+
+        metrics = trainer.callback_metrics
+        losses = {}
+        for k, v in metrics.items():
+            # Keep val metrics and train metrics (but drop any *_step to avoid duplicates).
+            is_val = k.startswith("val/")
+            is_train = k.startswith("train/") and ("step" not in k)
+            if not (is_val or is_train):
+                continue
+            if not any(tag in k for tag in ["loss", "rec_loss", "p_loss", "cycle_loss", "quant_loss", "g_loss", "disc_loss"]):
+                continue
+            try:
+                losses[k] = float(v)
+            except Exception:
+                continue
+
+        if not losses:
+            return
+
+        line_parts = [f"epoch={trainer.current_epoch}"]
+        for k in sorted(losses.keys()):
+            line_parts.append(f"{k}={losses[k]:.6f}")
+        line = ", ".join(line_parts)
+        with open(os.path.join(log_dir, self.filename), "a") as f:
+            f.write(line + "\n")
 
 
 if __name__ == "__main__":
@@ -410,8 +457,6 @@ if __name__ == "__main__":
         nowname = now+name+opt.postfix
         logdir = os.path.join("logs", nowname)
 
-    ckptdir = os.path.join(logdir, "checkpoints")
-    cfgdir = os.path.join(logdir, "configs")
     seed_everything(opt.seed)
 
     try:
@@ -420,6 +465,24 @@ if __name__ == "__main__":
         cli = OmegaConf.from_dotlist(unknown)
         config = OmegaConf.merge(*configs, cli)
         lightning_config = config.pop("lightning", OmegaConf.create())
+        # build logdir with run_name and stage info (only when not resuming)
+        if not opt.resume:
+            run_name = opt.run_name or config.get("run_name", "default_run")
+            config["run_name"] = run_name
+            stage_val = None
+            try:
+                stage_val = config.model.params.get("stage", None)
+            except Exception:
+                stage_val = None
+            if stage_val is None:
+                stage_dir = "synthrad_vqgan"
+            else:
+                stage_dir = f"synthrad_vqgan_stage{stage_val}"
+            session_name = nowname  # keep timestamp and optional postfix/name
+            logdir = os.path.join("logs", stage_dir, run_name, session_name)
+
+        ckptdir = os.path.join(logdir, "checkpoints")
+        cfgdir = os.path.join(logdir, "configs")
         # merge trainer cli with config
         trainer_config = lightning_config.get("trainer", OmegaConf.create())
         # default to ddp
@@ -524,6 +587,12 @@ if __name__ == "__main__":
                 "params": {
                     "logging_interval": "step",
                     #"log_momentum": True
+                }
+            },
+            "loss_txt_logger": {
+                "target": "main.LossTextLogger",
+                "params": {
+                    "filename": "losses.txt"
                 }
             },
         }

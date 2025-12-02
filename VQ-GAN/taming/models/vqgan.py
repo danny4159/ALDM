@@ -90,27 +90,34 @@ class VQModel(pl.LightningModule):
         if self.stage == 1: 
             y = None
             xrec, qloss = self(inputs)
+            cycle_recon = None
+            if getattr(self.loss, "cycle_weight", 0) > 0:
+                cycle_quant, _, _ = self.encode(xrec)
+                cycle_recon = self.decode(cycle_quant)
         else:
             y = batch["target_class"].long()
             xsrc, qloss, _ = self.encode(inputs)
             xrec = self.spade(xsrc, y)
             inputs, _, _ = self.encode(targets)
+            cycle_recon = None
 
         if optimizer_idx == 0:
             # autoencode
             aeloss, log_dict_ae = self.loss(qloss, inputs, xrec, optimizer_idx, self.global_step,
-                                            last_layer=self.get_last_layer(), label=y,split="train")
+                                            last_layer=self.get_last_layer(), label=y, split="train",
+                                            cycle_recon=cycle_recon)
 
-            self.log("train/aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=False)
-            self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=False)
+            self.log("train/total_loss", aeloss, prog_bar=True, logger=True, on_step=False, on_epoch=True)
+            self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=False, on_epoch=True)
             return aeloss
 
         if optimizer_idx == 1:
             # discriminator
             discloss, log_dict_disc = self.loss(qloss, inputs, xrec, optimizer_idx, self.global_step,
-                                            last_layer=self.get_last_layer(), label=y, split="train")
-            self.log("train/discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=False)
-            self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=False)
+                                            last_layer=self.get_last_layer(), label=y, split="train",
+                                            cycle_recon=cycle_recon)
+            self.log("train/disc_total_loss", discloss, prog_bar=True, logger=True, on_step=False, on_epoch=True)
+            self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=False, on_epoch=True)
             return discloss
 
     def validation_step(self, batch, batch_idx):
@@ -120,22 +127,29 @@ class VQModel(pl.LightningModule):
         if self.stage == 1: 
             y = None
             xrec, qloss = self(inputs)
+            cycle_recon = None
+            if getattr(self.loss, "cycle_weight", 0) > 0:
+                cycle_quant, _, _ = self.encode(xrec)
+                cycle_recon = self.decode(cycle_quant)
         else:
             y = batch["target_class"].long()
             xsrc, qloss, _ = self.encode(inputs)
             xrec = self.spade(xsrc, y)
             inputs, _, _ = self.encode(targets)
+            cycle_recon = None
 
         aeloss, log_dict_ae = self.loss(qloss, inputs, xrec, 0, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+                                            last_layer=self.get_last_layer(), split="val",
+                                            cycle_recon=cycle_recon)
 
         discloss, log_dict_disc = self.loss(qloss, inputs, xrec, 1, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+                                            last_layer=self.get_last_layer(), split="val",
+                                            cycle_recon=cycle_recon)
         rec_loss = log_dict_ae["val/rec_loss"]
+        self.log("val/total_loss", aeloss,
+                   prog_bar=True, logger=True, on_step=False, on_epoch=True)
         self.log("val/rec_loss", rec_loss,
-                   prog_bar=True, logger=True, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/aeloss", aeloss,
-                   prog_bar=True, logger=True, on_step=False, on_epoch=True, sync_dist=True)
+                   prog_bar=True, logger=True, on_step=False, on_epoch=True)
         self.log_dict(log_dict_ae, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         self.log_dict(log_dict_disc, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         return self.log_dict

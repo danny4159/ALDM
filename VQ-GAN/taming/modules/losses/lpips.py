@@ -1,5 +1,6 @@
 """Stripped version of https://github.com/richzhang/PerceptualSimilarity/tree/master/models"""
 
+import os
 import torch
 import torch.nn as nn
 from torchvision import models
@@ -14,7 +15,18 @@ class LPIPS(nn.Module):
         super().__init__()
         self.scaling_layer = ScalingLayer()
         # self.chns = [64, 128, 256, 512, 512]  # vg16 features
-        self.net = torch.hub.load("Warvito/MedicalNet-models", model="medicalnet_resnet10_23datasets", verbose=False,)
+        # Prefer locally-downloaded MedicalNet weights to avoid gdown rate limit.
+        local_ckpt = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "pretrained", "resnet_10_23dataset.pth"))
+        local_dir = os.path.dirname(local_ckpt)
+        if os.path.exists(local_ckpt):
+            self.net = torch.hub.load(
+                "Warvito/MedicalNet-models",
+                model="medicalnet_resnet10_23datasets",
+                verbose=False,
+                model_dir=local_dir,
+            )
+        else:
+            self.net = torch.hub.load("Warvito/MedicalNet-models", model="medicalnet_resnet10_23datasets", verbose=False,)
         for param in self.parameters():
             param.requires_grad = False
 

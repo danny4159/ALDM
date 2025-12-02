@@ -100,7 +100,7 @@ class VQModel(pl.LightningModule):
             aeloss, log_dict_ae = self.loss(qloss, inputs, xrec, optimizer_idx, self.global_step,
                                             last_layer=self.get_last_layer(), label=y,split="train")
 
-            self.log("train/aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=False)
+            self.log("train/total_loss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=False)
             self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return aeloss
 
@@ -108,7 +108,7 @@ class VQModel(pl.LightningModule):
             # discriminator
             discloss, log_dict_disc = self.loss(qloss, inputs, xrec, optimizer_idx, self.global_step,
                                             last_layer=self.get_last_layer(), label=y, split="train")
-            self.log("train/discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=False)
+            self.log("train/disc_total_loss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=False)
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return discloss
 
@@ -130,10 +130,10 @@ class VQModel(pl.LightningModule):
         discloss, log_dict_disc = self.loss(qloss, inputs, xrec, 1, self.global_step,
                                             last_layer=self.get_last_layer(), split="val")
         rec_loss = log_dict_ae["val/rec_loss"]
+        self.log("val/total_loss", aeloss,
+                   prog_bar=True, logger=True, on_step=False, on_epoch=True)
         self.log("val/rec_loss", rec_loss,
-                   prog_bar=True, logger=True, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/aeloss", aeloss,
-                   prog_bar=True, logger=True, on_step=False, on_epoch=True, sync_dist=True)
+                   prog_bar=True, logger=True, on_step=False, on_epoch=True)
         self.log_dict(log_dict_ae, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         self.log_dict(log_dict_disc, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         return self.log_dict

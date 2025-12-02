@@ -28,7 +28,7 @@ def get_transforms(phase="train", spatial_size=(144, 192, 144)):
             transforms.EnsureTyped(keys=modalities, allow_missing_keys=True),
             transforms.CropForegroundd(keys=modalities, source_key="mr", margin=0, allow_missing_keys=True),
             transforms.SpatialPadd(keys=modalities, spatial_size=spatial_size, allow_missing_keys=True),
-            transforms.CenterSpatialCropd(keys=modalities, roi_size=spatial_size, allow_missing_keys=True),
+            transforms.RandSpatialCropd(keys=modalities, roi_size=spatial_size, random_center=True, random_size=False, allow_missing_keys=True),
             transforms.ScaleIntensityRangePercentilesd(keys=modalities, lower=0.5, upper=99.5, b_min=-1, b_max=1, allow_missing_keys=True),
             train_transforms if phase == "train" else transforms.Compose([])
         ]
