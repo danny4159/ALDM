@@ -32,6 +32,8 @@ model:
         disc_weight: 0.8
         disc_factor: 0
         codebook_weight: 0
+        perceptual_weight: 0
+        cycle_weight: 0
         num_classes: 1
 
 data:
