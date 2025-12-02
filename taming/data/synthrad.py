@@ -58,7 +58,7 @@ def get_synthrad_dataset(data_path, phase="train", spatial_size=(144, 192, 144))
 
 
 class SynthRadBase(Dataset):
-    def __init__(self, source="mr", target="ct", **kwargs):
+    def __init__(self, source=None, target=None, **kwargs):
         super().__init__()
         self.data = None
         self.modalities = ["mr", "ct"]
@@ -71,7 +71,10 @@ class SynthRadBase(Dataset):
     def __getitem__(self, i):
         item = dict(self.data[i])
 
-        source, target = self.source, self.target
+        if self.source is None:
+            source, target = np.random.choice(self.modalities, size=2, replace=False)
+        else:
+            source, target = self.source, self.target
 
         item["source"] = item[source]
 
@@ -82,18 +85,18 @@ class SynthRadBase(Dataset):
 
 
 class SynthRadTrain(SynthRadBase):
-    def __init__(self, data_path, phase="train", source="mr", target="ct", spatial_size=(144, 192, 144)):
+    def __init__(self, data_path, phase="train", source=None, target=None, spatial_size=(144, 192, 144)):
         super().__init__(source=source, target=target)
         self.data = get_synthrad_dataset(data_path, phase, spatial_size)
 
 
 class SynthRadVal(SynthRadBase):
-    def __init__(self, data_path, phase="val", source="mr", target="ct", spatial_size=(144, 192, 144)):
+    def __init__(self, data_path, phase="val", source=None, target=None, spatial_size=(144, 192, 144)):
         super().__init__(source=source, target=target)
         self.data = get_synthrad_dataset(data_path, phase, spatial_size)
 
 
 class SynthRadTest(SynthRadBase):
-    def __init__(self, data_path, phase="test", source="mr", target="ct", spatial_size=(144, 192, 144)):
+    def __init__(self, data_path, phase="test", source=None, target=None, spatial_size=(144, 192, 144)):
         super().__init__(source=source, target=target)
         self.data = get_synthrad_dataset(data_path, phase, spatial_size)

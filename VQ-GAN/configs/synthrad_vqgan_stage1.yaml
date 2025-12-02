@@ -3,7 +3,7 @@ model:
   target: taming.models.vqgan.VQModel
   params:
     num_classes: 2
-    ckpt_path: logs/2025-12-02T01-51-30_synthrad_vqgan_stage1/testtube/version_0/checkpoints/epoch=206-step=22897.ckpt # null
+    ckpt_path: logs/2025-12-02T16-40-59_synthrad_vqgan_stage1/tensorboard/version_0/checkpoints/epoch=16-step=475.ckpt # null
     stage: 1
     embed_dim: 4
     n_embed: 8192
@@ -44,8 +44,6 @@ data:
       params:
         data_path: data/synthrad2023_mr-ct_pelvis/train
         phase: train
-        source: mr
-        target: ct
         spatial_size:
         - 96
         - 96
@@ -55,8 +53,6 @@ data:
       params:
         data_path: data/synthrad2023_mr-ct_pelvis/val
         phase: val
-        source: mr
-        target: ct
         spatial_size:
         - 96
         - 96
@@ -66,8 +62,6 @@ data:
       params:
         data_path: data/synthrad2023_mr-ct_pelvis/test
         phase: test
-        source: mr
-        target: ct
         spatial_size:
         - 96
         - 96

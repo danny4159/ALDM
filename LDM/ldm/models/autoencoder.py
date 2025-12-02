@@ -150,14 +150,14 @@ class VQModel(pl.LightningModule):
                                             last_layer=self.get_last_layer(), split="train",
                                             predicted_indices=ind)
 
-            self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=True)
+            self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return aeloss
 
         if optimizer_idx == 1:
             # discriminator
             discloss, log_dict_disc = self.loss(qloss, x, xrec, optimizer_idx, self.global_step,
                                             last_layer=self.get_last_layer(), split="train")
-            self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=True)
+            self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return discloss
 
     def validation_step(self, batch, batch_idx):
@@ -189,7 +189,7 @@ class VQModel(pl.LightningModule):
                    prog_bar=True, logger=True, on_step=False, on_epoch=True, sync_dist=True)
         if version.parse(pl.__version__) >= version.parse('1.4.0'):
             del log_dict_ae[f"val{suffix}/rec_loss"]
-        self.log_dict(log_dict_ae)
+        self.log_dict(log_dict_ae, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         self.log_dict(log_dict_disc)
         return self.log_dict
 
@@ -355,7 +355,7 @@ class AutoencoderKL(pl.LightningModule):
             # train encoder+decoder+logvar
             aeloss, log_dict_ae = self.loss(inputs, reconstructions, posterior, optimizer_idx, self.global_step,
                                             last_layer=self.get_last_layer(), split="train")
-            self.log("aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
+            self.log("aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=False)
             self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return aeloss
 
@@ -364,7 +364,7 @@ class AutoencoderKL(pl.LightningModule):
             discloss, log_dict_disc = self.loss(inputs, reconstructions, posterior, optimizer_idx, self.global_step,
                                                 last_layer=self.get_last_layer(), split="train")
 
-            self.log("discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
+            self.log("discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=False)
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return discloss
 
@@ -378,7 +378,7 @@ class AutoencoderKL(pl.LightningModule):
                                             last_layer=self.get_last_layer(), split="val")
 
         self.log("val/rec_loss", log_dict_ae["val/rec_loss"])
-        self.log_dict(log_dict_ae)
+        self.log_dict(log_dict_ae, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         self.log_dict(log_dict_disc)
         return self.log_dict
 

@@ -1,8 +1,6 @@
 import argparse, os, sys, datetime, glob, importlib
 from omegaconf import OmegaConf
 import numpy as np
-from PIL import Image
-import nibabel as nib
 import torch
 import torchvision
 from torch.utils.data import random_split, DataLoader, Dataset
@@ -223,78 +221,74 @@ class ImageLogger(Callback):
         super().__init__()
         self.batch_freq = batch_frequency
         self.max_images = max_images
-        self.logger_log_images = {
-            pl.loggers.WandbLogger: self._wandb,
-            pl.loggers.CSVLogger: self._testtube,
-        }
         self.log_steps = [2 ** n for n in range(int(np.log2(self.batch_freq)) + 1)]
         if not increase_log_steps:
             self.log_steps = [self.batch_freq]
         self.clamp = clamp
 
     @rank_zero_only
-    def _wandb(self, pl_module, images, batch_idx, split):
-        raise ValueError("No way wandb")
-        grids = dict()
-        for k in images:
-            grid = torchvision.utils.make_grid(images[k])
-            grids[f"{split}/{k}"] = wandb.Image(grid)
-        pl_module.logger.experiment.log(grids)
-
-    @rank_zero_only
-    def _testtube(self, pl_module, images, batch_idx, split):
-        return
-    
-    @rank_zero_only
-    def _get_affine(self, src_path):
-        M = nib.load(src_path).affine[:3, :3]
-        P = np.zeros_like(M)
-        max_abs_indices = np.argmax(np.abs(M), axis=1)
-        for i, col_idx in enumerate(max_abs_indices):
-            P[i, col_idx] = np.sign(M[i, col_idx])
-        
-        P_inv = np.linalg.inv(P)
-        new_M = M @ P_inv
-        affine = np.eye(4)
-        affine[:3, :3] = new_M
-         
-        return affine
-
-    @rank_zero_only
-    def log_local(self, save_dir, split, images, src_path,
-                  global_step, current_epoch, batch_idx):
+    def log_local(self, pl_module, save_dir, split, images, global_step, current_epoch, batch_idx):
         root = os.path.join(save_dir, "images", split)
-        for k in images:
-            img = images[k][0] #.squeeze(0)  # remove batch dimension, now it's (C, H, W, D)
-            img = img.permute(1, 2, 3, 0)  # reorder dimensions to be compatible with nibabel
-            img = img.numpy()
+        os.makedirs(root, exist_ok=True)
+        keys = list(images.keys())
+        num_samples = min(self.max_images, images[keys[0]].shape[0])
+        saved = []
 
-            filename = "{}_gs-{:06}_e-{:06}_b-{:06}.nii.gz".format(
-                k,
-                global_step,
-                current_epoch,
-                batch_idx)
+        for sample_idx in range(num_samples):
+            slices = []
+            for k in keys:
+                vol = images[k][sample_idx]
+                if vol.dim() == 4:  # (C, H, W, D)
+                    depth_idx = vol.shape[-1] // 2
+                    slice_img = vol[..., depth_idx]
+                else:  # already (C, H, W)
+                    slice_img = vol
+
+                if slice_img.dim() == 2:
+                    slice_img = slice_img.unsqueeze(0)
+
+                if slice_img.shape[0] == 1:
+                    slice_img = slice_img.repeat(3, 1, 1)
+                elif slice_img.shape[0] == 2:
+                    slice_img = torch.cat([slice_img, slice_img[:1]], dim=0)
+                else:
+                    slice_img = slice_img[:3]
+
+                slice_img = slice_img.float()
+                min_v, max_v = slice_img.min(), slice_img.max()
+                if (max_v - min_v) > 1e-8:
+                    slice_img = (slice_img - min_v) / (max_v - min_v)
+                else:
+                    slice_img = torch.zeros_like(slice_img)
+                slices.append(slice_img)
+
+            grid = torchvision.utils.make_grid(slices, nrow=len(slices), padding=2)
+            grid = torch.clamp(grid, 0.0, 1.0)
+
+            filename = "gs-{:06}_e-{:06}_b-{:06}_s-{:02}.png".format(
+                global_step, current_epoch, batch_idx, sample_idx)
             path = os.path.join(root, filename)
-            os.makedirs(os.path.split(path)[0], exist_ok=True)
+            torchvision.utils.save_image(grid, path)
+            saved.append((f"{split}/sample_{sample_idx}", grid))
 
-            affine = self._get_affine(src_path)
-            nifti_img = nib.Nifti1Image(img, affine)
-            nib.save(nifti_img, path)
+        logger = getattr(pl_module, "logger", None)
+        if logger is not None:
+            experiment = getattr(logger, "experiment", None)
+            if hasattr(experiment, "add_image"):
+                for tag, grid in saved:
+                    experiment.add_image(tag, grid, global_step=global_step)
 
     def log_img(self, pl_module, batch, batch_idx, split="train"):
         if (self.check_frequency(batch_idx) and  # batch_idx % self.batch_freq == 0
                 hasattr(pl_module, "log_images") and
                 callable(pl_module.log_images) and
                 self.max_images > 0):
-            logger = type(pl_module.logger)
-
             is_train = pl_module.training
             if is_train:
                 pl_module.eval()
 
             with torch.no_grad():
                 images = pl_module.log_images(batch, split=split, pl_module=pl_module)
-                src_path = batch["path"][0]
 
             for k in images:
                 N = min(images[k].shape[0], self.max_images)
@@ -304,11 +298,8 @@ class ImageLogger(Callback):
                     if self.clamp:
                         images[k] = torch.clamp(images[k], -1., 1.)
 
-            self.log_local(pl_module.logger.save_dir, split, images, src_path,
+            self.log_local(pl_module, pl_module.logger.save_dir, split, images,
                            pl_module.global_step, pl_module.current_epoch, batch_idx)
-
-            logger_log_images = self.logger_log_images.get(logger, lambda *args, **kwargs: None)
-            logger_log_images(pl_module, images, pl_module.global_step, split)
 
             if is_train:
                 pl_module.train()
@@ -466,6 +457,13 @@ if __name__ == "__main__":
                     "id": nowname,
                 }
             },
+            "tensorboard": {
+                "target": "pytorch_lightning.loggers.TensorBoardLogger",
+                "params": {
+                    "name": "tensorboard",
+                    "save_dir": logdir,
+                }
+            },
             "testtube": {
                 "target": "pytorch_lightning.loggers.CSVLogger",
                 "params": {
@@ -474,7 +472,7 @@ if __name__ == "__main__":
                 }
             },
         }
-        default_logger_cfg = default_logger_cfgs["testtube"]
+        default_logger_cfg = default_logger_cfgs["tensorboard"]
         logger_cfg = lightning_config.logger or OmegaConf.create() # 
         logger_cfg = OmegaConf.merge(default_logger_cfg, logger_cfg)
         trainer_kwargs["logger"] = instantiate_from_config(logger_cfg)
