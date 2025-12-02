@@ -3,7 +3,7 @@ model:
   target: taming.models.vqgan.VQModel
   params:
     num_classes: 5 # ckpt가 5-class 기준으로 학습됨
-    ckpt_path: logs/2025-12-02T01-51-30_synthrad_vqgan_stage1/testtube/version_0/checkpoints/epoch=206-step=22897.ckpt #null #pretrained/stage2.ckpt #null
+    ckpt_path: pretrained/stage2.ckpt #null #pretrained/stage2.ckpt #null
     ignore_keys:
     - loss.discriminator
     stage: 2

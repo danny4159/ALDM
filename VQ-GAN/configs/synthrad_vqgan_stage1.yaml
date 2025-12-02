@@ -3,7 +3,7 @@ model:
   target: taming.models.vqgan.VQModel
   params:
     num_classes: 2
-    ckpt_path: null
+    ckpt_path: logs/2025-12-02T01-51-30_synthrad_vqgan_stage1/testtube/version_0/checkpoints/epoch=206-step=22897.ckpt # null
     stage: 1
     embed_dim: 4
     n_embed: 8192
@@ -37,8 +37,8 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 1
-    num_workers: 2
+    batch_size: 2
+    num_workers: 4
     train:
       target: taming.data.synthrad.SynthRadTrain
       params:
