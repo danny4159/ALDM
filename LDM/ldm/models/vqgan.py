@@ -45,6 +45,12 @@ class VQModel(pl.LightningModule):
             self.monitor = monitor
 
     def init_from_ckpt(self, path, ignore_keys=list()):
+        # Some older checkpoints were pickled referencing torch._tensor; stub it for compatibility.
+        import sys, types, torch as _torch
+        if "torch._tensor" not in sys.modules:
+            stub = types.ModuleType("torch._tensor")
+            stub.Tensor = _torch.Tensor
+            sys.modules["torch._tensor"] = stub
         sd = torch.load(path, map_location="cpu")["state_dict"]
         keys = list(sd.keys())
         for k in keys:
@@ -134,6 +140,9 @@ class VQModel(pl.LightningModule):
                    prog_bar=True, logger=True, on_step=False, on_epoch=True)
         self.log("val/rec_loss", rec_loss,
                    prog_bar=True, logger=True, on_step=False, on_epoch=True)
+        # checkpoint monitoring용으로 슬래시 없는 버전도 함께 로깅
+        self.log("val_rec_loss", rec_loss,
+                   prog_bar=False, logger=True, on_step=False, on_epoch=True)
         self.log_dict(log_dict_ae, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         self.log_dict(log_dict_disc, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         return self.log_dict

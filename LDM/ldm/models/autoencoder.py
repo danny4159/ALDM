@@ -379,7 +379,10 @@ class AutoencoderKL(pl.LightningModule):
         discloss, log_dict_disc = self.loss(inputs, reconstructions, posterior, 1, self.global_step,
                                             last_layer=self.get_last_layer(), split="val")
 
-        self.log("val/rec_loss", log_dict_ae["val/rec_loss"])
+        rec_loss = log_dict_ae["val/rec_loss"]
+        self.log("val/rec_loss", rec_loss)
+        # checkpoint 모니터링을 위해 슬래시 없는 키도 기록
+        self.log("val_rec_loss", rec_loss, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         self.log_dict(log_dict_ae, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         self.log_dict(log_dict_disc)
         return self.log_dict

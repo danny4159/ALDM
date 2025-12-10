@@ -3,7 +3,7 @@ model:
   target: taming.models.vqgan.VQModel
   params:
     num_classes: 4
-    ckpt_path: pretrained/stage1.ckpt #null
+    ckpt_path: VQ-GAN/pretrained/stage1.ckpt # null # pretrained/stage1.ckpt #null
     stage: 1
     embed_dim: 4
     n_embed: 8192
@@ -32,9 +32,17 @@ model:
         disc_weight: 0.8
         disc_factor: 0
         codebook_weight: 0
-        perceptual_weight: 0
-        cycle_weight: 0
         num_classes: 1
+        ## 내가 실험해보는거
+        # disc_conditional: False
+        # disc_in_channels: 1
+        # disc_start: 0
+        # disc_weight: 0.8
+        # disc_factor: 1.0
+        # codebook_weight: 0
+        # perceptual_weight: 1.0
+        # cycle_weight: 0
+        # num_classes: 1
 
 data:
   target: main.DataModuleFromConfig
@@ -48,9 +56,12 @@ data:
         # csv_path: 
         phase: train
         spatial_size:
-        - 128
-        - 128
-        - 128
+        - 80
+        - 80
+        - 80
+        # - 128
+        # - 128
+        # - 128
     validation:
       target: taming.data.brats.BraTS2021Test
       params:
@@ -58,9 +69,12 @@ data:
         # csv_path: 
         phase: val
         spatial_size:
-        - 128
-        - 128
-        - 128
+        - 80
+        - 80
+        - 80
+        # - 128
+        # - 128
+        # - 128
     test:
       target: taming.data.brats.BraTS2021Test
       params:
@@ -68,6 +82,9 @@ data:
         # csv_path: 
         phase: test
         spatial_size:
-        - 128
-        - 128
-        - 128
+        - 192
+        - 192
+        - 192
+        # - 128
+        # - 128
+        # - 128

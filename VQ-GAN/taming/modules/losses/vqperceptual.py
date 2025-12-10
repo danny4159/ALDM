@@ -62,6 +62,30 @@ class VQLPIPSWithDiscriminator(nn.Module):
         self.disc_factor = disc_factor
         self.discriminator_weight = disc_weight
         self.disc_conditional = disc_conditional
+        self._nan_reported = False
+
+    def _check_finite(self, tensor_dict, split, optimizer_idx):
+        if self._nan_reported:
+            return
+        bad = []
+        for name, tensor in tensor_dict.items():
+            if tensor is None:
+                continue
+            t = tensor.detach()
+            finite_mask = torch.isfinite(t)
+            if not finite_mask.all():
+                nan_count = (~finite_mask).sum().item()
+                if finite_mask.any():
+                    finite_vals = t[finite_mask]
+                    tmin = finite_vals.min().item()
+                    tmax = finite_vals.max().item()
+                else:
+                    tmin = float("nan")
+                    tmax = float("nan")
+                bad.append(f"{name}(nan_count={nan_count}, min={tmin}, max={tmax})")
+        if bad:
+            print(f"[NaN-Guard] split={split} opt_idx={optimizer_idx} non-finite components: {', '.join(bad)}")
+            self._nan_reported = True
 
     def calculate_adaptive_weight(self, nll_loss, g_loss, last_layer=None):
         if last_layer is not None:
@@ -77,7 +101,8 @@ class VQLPIPSWithDiscriminator(nn.Module):
         return d_weight
 
     def forward(self, codebook_loss, inputs, reconstructions, optimizer_idx,
-                global_step, last_layer=None, label=None, split="train", cycle_recon=None):
+                global_step, last_layer=None, label=None, split="train",
+                cycle_recon=None, cycle_target=None):
         rec_loss = torch.abs(inputs.contiguous() - reconstructions.contiguous())
         if self.perceptual_loss is not None:
             perceptual_device = next(self.perceptual_loss.parameters()).device
@@ -108,7 +133,8 @@ class VQLPIPSWithDiscriminator(nn.Module):
             disc_factor = adopt_weight(self.disc_factor, global_step, threshold=self.discriminator_iter_start)
             cycle_loss = torch.tensor(0.0, device=inputs.device)
             if self.cycle_weight > 0 and cycle_recon is not None:
-                cycle_loss = torch.abs(inputs.contiguous() - cycle_recon.contiguous()).mean()
+                target_for_cycle = cycle_target if cycle_target is not None else inputs
+                cycle_loss = torch.abs(target_for_cycle.contiguous() - cycle_recon.contiguous()).mean()
 
             loss = (
                 nll_loss
@@ -116,16 +142,33 @@ class VQLPIPSWithDiscriminator(nn.Module):
                 + self.codebook_weight * codebook_loss.mean()
                 + self.cycle_weight * cycle_loss
             )
+            self._check_finite(
+                {
+                    "rec_loss": rec_loss,
+                    "p_loss": p_loss,
+                    "nll_loss": nll_loss,
+                    "g_loss": g_loss,
+                    "codebook_loss": codebook_loss.mean(),
+                    "cycle_loss": cycle_loss,
+                    "total_loss": loss,
+                },
+                split=split,
+                optimizer_idx=optimizer_idx,
+            )
 
             log = {"{}/total_loss".format(split): loss.clone().detach().mean(),
-                   "{}/quant_loss".format(split): codebook_loss.detach().mean(),
                    "{}/nll_loss".format(split): nll_loss.detach().mean(),
                    "{}/rec_loss".format(split): rec_loss.detach().mean(),
-                   "{}/p_loss".format(split): p_loss.detach().mean(),
-                   "{}/cycle_loss".format(split): cycle_loss.detach().mean(),
-                   "{}/disc_factor".format(split): torch.tensor(disc_factor),
-                   "{}/g_loss".format(split): g_loss.detach().mean(),
                    }
+            if self.codebook_weight > 0:
+                log["{}/quant_loss".format(split)] = codebook_loss.detach().mean()
+            if self.perceptual_weight > 0:
+                log["{}/p_loss".format(split)] = p_loss.detach().mean()
+            if self.cycle_weight > 0:
+                log["{}/cycle_loss".format(split)] = cycle_loss.detach().mean()
+            if disc_factor > 0:
+                log["{}/disc_factor".format(split)] = torch.tensor(disc_factor)
+                log["{}/g_loss".format(split)] = g_loss.detach().mean()
             return loss, log
 
         if optimizer_idx == 1:
@@ -150,9 +193,21 @@ class VQLPIPSWithDiscriminator(nn.Module):
                 disc_factor = adopt_weight(self.disc_factor, global_step, threshold=self.discriminator_iter_start)
                 d_loss = disc_factor * 0.5 * (real_loss + fake_loss)
 
+            self._check_finite(
+                {
+                    "disc_loss": d_loss,
+                    "logits_real": logits_real,
+                    "logits_fake": logits_fake,
+                },
+                split=split,
+                optimizer_idx=optimizer_idx,
+            )
 
-            log = {"{}/disc_loss".format(split): d_loss.clone().detach().mean(),
-                   "{}/logits_real".format(split): logits_real.detach().mean(),
-                   "{}/logits_fake".format(split): logits_fake.detach().mean()
-                   }
-            return d_loss, log
+            if disc_factor > 0:
+                log = {"{}/disc_loss".format(split): d_loss.clone().detach().mean(),
+                       "{}/logits_real".format(split): logits_real.detach().mean(),
+                       "{}/logits_fake".format(split): logits_fake.detach().mean()
+                       }
+                return d_loss, log
+            # if disc_factor == 0, skip logging/optimization
+            return d_loss, {}

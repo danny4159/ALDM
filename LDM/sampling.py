@@ -2,11 +2,15 @@ import argparse, os, sys, datetime, glob, importlib, csv
 import numpy as np
 import nibabel as nib
 import pytorch_lightning as pl
+from monai.inferers import sliding_window_inference
 
 from omegaconf import OmegaConf
 from pytorch_lightning.trainer import Trainer
 
 from ldm.util import instantiate_from_config
+
+# ensure local modules (e.g., taming) are on path when running as a script
+sys.path.append(os.getcwd())
 
 
 def get_parser(**parser_kwargs):
@@ -114,28 +118,26 @@ def get_parser(**parser_kwargs):
         default=200,
         help="ddim steps",
     )
+    parser.add_argument(
+        "--outdir",
+        type=str,
+        default=None,
+        help="output directory for saved predictions (overrides config outdir)",
+    )
     return parser
 
 
 
-def get_affine(src_path):
-    M = nib.load(src_path).affine[:3, :3]
-    P = np.zeros_like(M)
-    max_abs_indices = np.argmax(np.abs(M), axis=1)
-    for i, col_idx in enumerate(max_abs_indices):
-        P[i, col_idx] = np.sign(M[i, col_idx])
-    
-    P_inv = np.linalg.inv(P)
-    new_M = M @ P_inv
-    affine = np.eye(4)
-    affine[:3, :3] = new_M
-         
-    return affine
+def get_affine(src_path, affine_override=None):
+    # preserve orientation/spacing; prefer provided affine (e.g., from MetaTensor)
+    if affine_override is not None:
+        return affine_override
+    return nib.load(src_path).affine
 
-def save_nii(img, name, path, src_path):
+def save_nii(img, name, path, src_path, affine_override=None):
     img = np.transpose(img, (1, 2, 3, 0))
 
-    affine = get_affine(src_path)
+    affine = get_affine(src_path, affine_override)
     nifti_img = nib.Nifti1Image(img, affine)
     nib.save(nifti_img, f"{path}/{name}.nii.gz")
 
@@ -151,11 +153,44 @@ if __name__ == "__main__":
     configs = [OmegaConf.load(cfg) for cfg in opt.base]
     cli = OmegaConf.from_dotlist(unknown)
     config = OmegaConf.merge(*configs, cli)
-    
+    if opt.outdir:
+        config["outdir"] = opt.outdir
+
     # model
     model = instantiate_from_config(config.model)
     model.eval()
     model.to("cuda")
+
+    sw_cfg = config.get("inference", {}).get("sliding_window", {})
+    sw_enabled = sw_cfg.get("enabled", False)
+
+    # when sliding window is on, avoid random cropping so full volumes are kept
+    if sw_enabled:
+        # enforce batch_size=1 to avoid stacking volumes of different shapes
+        try:
+            config.data.params.batch_size = 1
+        except Exception:
+            pass
+        for split in ("validation", "test"):
+            try:
+                ds_cfg = config.data.params[split]
+                ds_params = ds_cfg.get("params", ds_cfg)
+                ds_params["apply_rand_crop"] = False
+                if sw_cfg.get("disable_foreground_crop", True):
+                    ds_params["apply_foreground_crop"] = False
+                # keep original volume size by skipping pad/crop if desired
+                if sw_cfg.get("disable_spatial_pad", True):
+                    ds_params["spatial_size"] = None
+            except Exception:
+                pass
+
+    try:
+        test_params = config.data.params.test.get("params", config.data.params.test)
+        print(f"[sampling] sw_enabled={sw_enabled}, test spatial_size={test_params.get('spatial_size', None)}, "
+              f"apply_rand_crop={test_params.get('apply_rand_crop', None)}, "
+              f"apply_foreground_crop={test_params.get('apply_foreground_crop', None)}")
+    except Exception:
+        pass
 
     # data
     data = instantiate_from_config(config.data)
@@ -163,15 +198,64 @@ if __name__ == "__main__":
     data.setup()
 
     test_loader = data.test_dataloader()
-    root_path = "results/" + opt.base[0].split("/")[-1].split(".")[0]
+    # respect outdir override if provided via CLI (merged into config)
+    outdir = config.get("outdir", None)
+    if outdir is None:
+        outdir = "results/" + opt.base[0].split("/")[-1].split(".")[0]
+    root_path = outdir
+    first_log = True
     for batch in test_loader:
         src_path = batch["path"][0]
+        tgt_path = batch.get("target_path", [src_path])[0]
         subject = batch["subject_id"][0]
         print("processing...", subject)
 
         sub_path = os.path.join(root_path, subject)
         maybe_mkdir(sub_path)
-        
-        log = model.log_images(batch, ddim_steps=opt.ddim_steps)
-        recon = log["samples_x0_quantized"][0].detach().cpu().numpy()
-        save_nii(recon, "pred", sub_path, src_path)
+
+        if sw_enabled:
+            roi_size = tuple(sw_cfg.get("roi_size", config.data.params.test.spatial_size))
+            sw_batch_size = sw_cfg.get("batch_size", 1)
+            overlap = float(sw_cfg.get("overlap", 0.25))
+            mode = sw_cfg.get("mode", "gaussian")
+            padding_mode = sw_cfg.get("padding_mode", "constant")
+            cval = sw_cfg.get("cval", sw_cfg.get("constant_values", 0.0))
+            y_cls = batch["target_class"].to(model.device)
+
+            def _predict(x):
+                x = x.to(model.device)
+                bs = x.shape[0]
+                patch_batch = {
+                    "source": x,
+                    "target": x,  # dummy placeholder; target is not used during sampling
+                    "target_class": y_cls[:bs],
+                }
+                log = model.log_images(patch_batch, N=bs, sample=True, ddim_steps=opt.ddim_steps)
+                return log["samples_x0_quantized"]
+
+            sw_kwargs = dict(
+                inputs=batch["source"],
+                roi_size=roi_size,
+                sw_batch_size=sw_batch_size,
+                predictor=_predict,
+                overlap=overlap,
+                mode=mode,
+                sw_device=model.device,
+                device=model.device,
+                padding_mode=padding_mode,
+            )
+            if padding_mode == "constant":
+                sw_kwargs["cval"] = cval
+            recon = sliding_window_inference(**sw_kwargs)[0].detach().cpu().numpy()
+        else:
+            log = model.log_images(batch, ddim_steps=opt.ddim_steps)
+            recon = log["samples_x0_quantized"][0].detach().cpu().numpy()
+        # save pred, source, target with proper orientation
+        src_affine = getattr(batch["source"][0], "affine", None)
+        tgt_affine = getattr(batch["target"][0], "affine", None)
+        save_nii(recon, "pred", sub_path, tgt_path, affine_override=tgt_affine)
+        save_nii(batch["source"][0].detach().cpu().numpy(), "source", sub_path, src_path, affine_override=src_affine)
+        save_nii(batch["target"][0].detach().cpu().numpy(), "target", sub_path, tgt_path, affine_override=tgt_affine)
+        if first_log:
+            print(f"[sampling] first batch shapes: source {tuple(batch['source'].shape)}, target {tuple(batch['target'].shape)}, recon {recon.shape}")
+            first_log = False

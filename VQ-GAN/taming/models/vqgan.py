@@ -56,10 +56,10 @@ class VQModel(pl.LightningModule):
         print(f"Restored from {path}")
 
     def encode(self, x):
-        h = self.encoder(x)
-        h = self.quant_conv(h)
+        h = self.encoder(x) # (B, z_channels=4, H',W',D')
+        h = self.quant_conv(h) # (B, embed_dim=4, H',W',D')
         quant, emb_loss, info = self.quantize(h)
-        return quant, emb_loss, info
+        return quant, emb_loss, info # 여기서 지금 encoder 결과도 channel이 엄청작아. VQ를 하기위해 의도적으로 설계됨. VQ loss를 안쓰면 형편없는 결과 나올수밖에.
 
     def decode(self, quant):
         quant = self.post_quant_conv(quant)
@@ -83,29 +83,39 @@ class VQModel(pl.LightningModule):
         return x.float()
 
     def training_step(self, batch, batch_idx, optimizer_idx):
-        inputs = self.get_input(batch, "source")
-        targets = self.get_input(batch, "target")
+        src_imgs = self.get_input(batch, "source")
+        tgt_imgs = self.get_input(batch, "target")
         
 
         if self.stage == 1: 
             y = None
-            xrec, qloss = self(inputs)
+            xrec, qloss = self(src_imgs)
+            inputs = src_imgs
             cycle_recon = None
-            if getattr(self.loss, "cycle_weight", 0) > 0:
-                cycle_quant, _, _ = self.encode(xrec)
-                cycle_recon = self.decode(cycle_quant)
+            cycle_target = None
         else:
             y = batch["target_class"].long()
-            xsrc, qloss, _ = self.encode(inputs)
-            xrec = self.spade(xsrc, y)
-            inputs, _, _ = self.encode(targets)
+            source_class = batch.get("source_class", None)
+            if source_class is not None:
+                source_class = source_class.long()
+            xsrc, qloss, _ = self.encode(src_imgs)
+            spade_latent = self.spade(xsrc, y)
+            xrec = self.decode(spade_latent)  # decoded target-style image
+            inputs = tgt_imgs
             cycle_recon = None
+            cycle_target = None
+            if getattr(self.loss, "cycle_weight", 0) > 0 and source_class is not None:
+                # decode target prediction, re-encode, then SPADE back to source class and decode
+                cycle_quant, _, _ = self.encode(xrec)
+                cycle_latent = self.spade(cycle_quant, source_class)
+                cycle_recon = self.decode(cycle_latent)
+                cycle_target = src_imgs
 
         if optimizer_idx == 0:
             # autoencode
             aeloss, log_dict_ae = self.loss(qloss, inputs, xrec, optimizer_idx, self.global_step,
                                             last_layer=self.get_last_layer(), label=y, split="train",
-                                            cycle_recon=cycle_recon)
+                                            cycle_recon=cycle_recon, cycle_target=cycle_target)
 
             self.log("train/total_loss", aeloss, prog_bar=True, logger=True, on_step=False, on_epoch=True)
             self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=False, on_epoch=True)
@@ -115,41 +125,53 @@ class VQModel(pl.LightningModule):
             # discriminator
             discloss, log_dict_disc = self.loss(qloss, inputs, xrec, optimizer_idx, self.global_step,
                                             last_layer=self.get_last_layer(), label=y, split="train",
-                                            cycle_recon=cycle_recon)
+                                            cycle_recon=cycle_recon, cycle_target=cycle_target)
             self.log("train/disc_total_loss", discloss, prog_bar=True, logger=True, on_step=False, on_epoch=True)
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=False, on_epoch=True)
             return discloss
 
     def validation_step(self, batch, batch_idx):
-        inputs = self.get_input(batch, "source")
+        src_imgs = self.get_input(batch, "source")
         targets = self.get_input(batch, "target")
 
         if self.stage == 1: 
             y = None
-            xrec, qloss = self(inputs)
+            xrec, qloss = self(src_imgs)
+            inputs = src_imgs
             cycle_recon = None
-            if getattr(self.loss, "cycle_weight", 0) > 0:
-                cycle_quant, _, _ = self.encode(xrec)
-                cycle_recon = self.decode(cycle_quant)
+            cycle_target = None
         else:
             y = batch["target_class"].long()
-            xsrc, qloss, _ = self.encode(inputs)
-            xrec = self.spade(xsrc, y)
-            inputs, _, _ = self.encode(targets)
+            source_class = batch.get("source_class", None)
+            if source_class is not None:
+                source_class = source_class.long()
+            xsrc, qloss, _ = self.encode(src_imgs)
+            spade_latent = self.spade(xsrc, y)
+            xrec = self.decode(spade_latent)
+            inputs = targets
             cycle_recon = None
+            cycle_target = None
+            if getattr(self.loss, "cycle_weight", 0) > 0 and source_class is not None:
+                cycle_quant, _, _ = self.encode(xrec)
+                cycle_latent = self.spade(cycle_quant, source_class)
+                cycle_recon = self.decode(cycle_latent)
+                cycle_target = src_imgs
 
         aeloss, log_dict_ae = self.loss(qloss, inputs, xrec, 0, self.global_step,
                                             last_layer=self.get_last_layer(), split="val",
-                                            cycle_recon=cycle_recon)
+                                            cycle_recon=cycle_recon, cycle_target=cycle_target)
 
         discloss, log_dict_disc = self.loss(qloss, inputs, xrec, 1, self.global_step,
                                             last_layer=self.get_last_layer(), split="val",
-                                            cycle_recon=cycle_recon)
+                                            cycle_recon=cycle_recon, cycle_target=cycle_target)
         rec_loss = log_dict_ae["val/rec_loss"]
         self.log("val/total_loss", aeloss,
                    prog_bar=True, logger=True, on_step=False, on_epoch=True)
         self.log("val/rec_loss", rec_loss,
                    prog_bar=True, logger=True, on_step=False, on_epoch=True)
+        # duplicate without slash for checkpoint monitoring
+        self.log("val_rec_loss", rec_loss,
+                   prog_bar=False, logger=True, on_step=False, on_epoch=True)
         self.log_dict(log_dict_ae, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         self.log_dict(log_dict_disc, on_step=False, on_epoch=True, logger=True, prog_bar=False)
         return self.log_dict

@@ -4,11 +4,22 @@ import numpy as np
 import nibabel as nib
 from omegaconf import OmegaConf
 from PIL import Image
-from main import instantiate_from_config, DataModuleFromConfig
+from pathlib import Path
 from torch.utils.data import DataLoader
 from torch.utils.data.dataloader import default_collate
 from tqdm import trange
 from einops import rearrange
+
+# Make project root importable (so `import main` works when running from anywhere)
+SCRIPT_DIR = Path(__file__).resolve().parent
+VQGAN_ROOT = SCRIPT_DIR.parents[1]  # VQ-GAN/taming -> VQ-GAN
+REPO_ROOT = SCRIPT_DIR.parents[2]   # repo root containing VQ-GAN/
+for p in (VQGAN_ROOT, REPO_ROOT):
+    p_str = str(p)
+    if p_str not in sys.path:
+        sys.path.append(p_str)
+
+from main import instantiate_from_config, DataModuleFromConfig
 
 
 def save_image(x, path):
@@ -20,12 +31,12 @@ def save_image(x, path):
 
 @torch.no_grad()
 def run_conditional(model, dsets, outdir, source, target, batch_size=1):
-    modalities = ["t1", "t1ce", "t2", "flair"]
     if len(dsets.datasets) > 1:
         split = sorted(dsets.datasets.keys())[0]
         dset = dsets.datasets[split]
     else:
         dset = next(iter(dsets.datasets.values()))
+    modalities = getattr(dset, "modalities", ["t1", "t1ce", "mr", "ct"])
     print("Dataset: ", dset.__class__.__name__)
     for start_idx in trange(0,len(dset)-batch_size+1,batch_size):
         indices = list(range(start_idx, start_idx+batch_size))
@@ -45,10 +56,17 @@ def run_conditional(model, dsets, outdir, source, target, batch_size=1):
         recon = recon.squeeze(0)
         recon = recon.permute(1, 2, 3, 0).cpu().numpy()
 
+        source_vol = x.squeeze(0)
+        source_vol = source_vol.permute(1, 2, 3, 0).cpu().numpy()
+
         path = os.path.join(outdir, "samples", f"{subject_id}_{source}_to_{target}.nii.gz")
+        source_path = os.path.join(outdir, "samples", f"{subject_id}_{source}.nii.gz")
 
         nifti_img = nib.Nifti1Image(recon, np.eye(4))
         nib.save(nifti_img, path)
+
+        source_img = nib.Nifti1Image(source_vol, np.eye(4))
+        nib.save(source_img, source_path)
 
 
 def get_parser():

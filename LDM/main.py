@@ -6,6 +6,7 @@ import torchvision
 import pytorch_lightning as pl
 
 from packaging import version
+from PIL import Image
 from omegaconf import OmegaConf
 from torch.utils.data import random_split, DataLoader, Dataset, Subset
 from functools import partial
@@ -18,6 +19,10 @@ from pytorch_lightning.utilities import rank_zero_info
 
 from ldm.data.base import Txt2ImgIterableBaseDataset
 from ldm.util import instantiate_from_config
+
+# Pillow 10 removed Image.ANTIALIAS; set fallback for older Torch TB utils.
+if not hasattr(Image, "ANTIALIAS"):
+    Image.ANTIALIAS = Image.Resampling.LANCZOS
 
 
 def get_parser(**parser_kwargs):
@@ -261,6 +266,7 @@ class SetupCallback(Callback):
 
     def on_pretrain_routine_start(self, trainer, pl_module):
         if trainer.global_rank == 0:
+            print(f"Logdir: {self.logdir}")
             # Create logdirs and save configs
             os.makedirs(self.logdir, exist_ok=True)
             os.makedirs(self.ckptdir, exist_ok=True)
@@ -395,6 +401,21 @@ class ImageLogger(Callback):
         self.log_img(pl_module, batch, batch_idx, split="val")
 
 
+class LastCheckpointCallback(Callback):
+    """Save/overwrite last.ckpt each epoch without keeping history."""
+
+    def __init__(self, ckptdir):
+        super().__init__()
+        self.ckptdir = ckptdir
+
+    def on_train_epoch_end(self, trainer, pl_module, *args, **kwargs):
+        if trainer.global_rank != 0:
+            return
+        os.makedirs(self.ckptdir, exist_ok=True)
+        ckpt_path = os.path.join(self.ckptdir, "last.ckpt")
+        trainer.save_checkpoint(ckpt_path)
+
+
 class CUDACallback(Callback):
     # see https://github.com/SeanNaren/minGPT/blob/master/mingpt/callback.py
     def on_train_epoch_start(self, trainer, pl_module):
@@ -403,7 +424,7 @@ class CUDACallback(Callback):
         torch.cuda.synchronize(trainer.root_gpu)
         self.start_time = time.time()
 
-    def on_train_epoch_end(self, trainer, pl_module):
+    def on_train_epoch_end(self, trainer, pl_module, outputs=None):
         torch.cuda.synchronize(trainer.root_gpu)
         max_memory = torch.cuda.max_memory_allocated(trainer.root_gpu) / 2 ** 20
         epoch_time = time.time() - self.start_time
@@ -477,26 +498,36 @@ if __name__ == "__main__":
             "If you want to resume training in a new log folder, "
             "use -n/--name in combination with --resume_from_checkpoint"
         )
+    # resume 처리
+    resume_ckpt, resume_logdir = None, None
     if opt.resume:
         if not os.path.exists(opt.resume):
             raise ValueError("Cannot find {}".format(opt.resume))
         if os.path.isfile(opt.resume):
             paths = opt.resume.split("/")
-            # idx = len(paths)-paths[::-1].index("logs")+1
-            # logdir = "/".join(paths[:idx])
-            logdir = "/".join(paths[:-2])
-            ckpt = opt.resume
+            try:
+                idx = len(paths)-paths[::-1].index("logs")+1
+            except ValueError:
+                idx = -2
+            resume_logdir = "/".join(paths[:idx])
+            resume_ckpt = opt.resume
         else:
             assert os.path.isdir(opt.resume), opt.resume
-            logdir = opt.resume.rstrip("/")
-            ckpt = os.path.join(logdir, "checkpoints", "last.ckpt")
+            resume_logdir = opt.resume.rstrip("/")
+            resume_ckpt = os.path.join(resume_logdir, "checkpoints", "last.ckpt")
+        opt.resume_from_checkpoint = resume_ckpt
 
-        opt.resume_from_checkpoint = ckpt
-        base_configs = sorted(glob.glob(os.path.join(logdir, "configs/*.yaml")))
+    new_logdir_on_resume = opt.resume and (opt.run_name is not None or opt.name is not None)
+
+    if opt.resume and not new_logdir_on_resume:
+        base_configs = sorted(glob.glob(os.path.join(resume_logdir, "configs/*.yaml")))
         opt.base = base_configs + opt.base
-        _tmp = logdir.split("/")
-        nowname = _tmp[-1]
+        nowname = os.path.basename(resume_logdir)
+        logdir = resume_logdir
     else:
+        if opt.resume and new_logdir_on_resume and not opt.base and resume_logdir:
+            opt.base = sorted(glob.glob(os.path.join(resume_logdir, "configs/*.yaml")))
+        cfg_name = None
         if opt.name:
             name = "_" + opt.name
         elif opt.base:
@@ -505,8 +536,10 @@ if __name__ == "__main__":
             name = "_" + cfg_name
         else:
             name = ""
-        nowname = now + name + opt.postfix
-        logdir = os.path.join(opt.logdir, nowname)
+        nowname = now + opt.postfix
+        exp_name = cfg_name if cfg_name is not None else "default_exp"
+        run_name_cli = opt.run_name
+        logdir = os.path.join(opt.logdir, exp_name, run_name_cli or "default_run", nowname)
 
     ckptdir = os.path.join(logdir, "checkpoints")
     cfgdir = os.path.join(logdir, "configs")
@@ -519,13 +552,18 @@ if __name__ == "__main__":
         cli = OmegaConf.from_dotlist(unknown)
         config = OmegaConf.merge(*configs, cli)
         lightning_config = config.pop("lightning", OmegaConf.create())
-        # build logdir with run_name and stage info (only when not resuming)
+        # build logdir with exp/run/time layout (only when not resuming)
         if not opt.resume:
             run_name = opt.run_name or config.get("run_name", "default_run")
+            exp_name = config.get("exp_name", None)
+            if exp_name is None and opt.base:
+                cfg_fname = os.path.split(opt.base[0])[-1]
+                exp_name = os.path.splitext(cfg_fname)[0]
+            exp_name = exp_name or "default_exp"
             config["run_name"] = run_name
-            stage_dir = "synthrad_ldm"
-            session_name = nowname
-            logdir = os.path.join(opt.logdir, stage_dir, run_name, session_name)
+            config["exp_name"] = exp_name
+            nowname = now + opt.postfix
+            logdir = os.path.join(opt.logdir, exp_name, run_name, nowname)
             ckptdir = os.path.join(logdir, "checkpoints")
             cfgdir = os.path.join(logdir, "configs")
         # merge trainer cli with config
@@ -582,23 +620,35 @@ if __name__ == "__main__":
         else:
             logger_cfg = OmegaConf.create()
         logger_cfg = OmegaConf.merge(default_logger_cfg, logger_cfg)
+        os.makedirs(logdir, exist_ok=True)
+        log_name = logger_cfg.params.get("name", "tensorboard")
+        log_root = os.path.join(logdir, log_name)
+        os.makedirs(log_root, exist_ok=True)
+        os.makedirs(os.path.join(log_root, "version_0"), exist_ok=True)
         trainer_kwargs["logger"] = instantiate_from_config(logger_cfg)
 
         # modelcheckpoint - use TrainResult/EvalResult(checkpoint_on=metric) to
         # specify which metric is used to determine best models
+        monitor_metric = "val_rec_loss"
+        if hasattr(model, "monitor"):
+            print(f"Monitoring {model.monitor} as checkpoint metric.")
+            monitor_metric = model.monitor
+
         default_modelckpt_cfg = {
             "target": "pytorch_lightning.callbacks.ModelCheckpoint",
             "params": {
                 "dirpath": ckptdir,
-                "filename": "{epoch:06}",
-                "verbose": True,
-                "save_last": True,
+                "filename": "ep{epoch}-step{step}",
+                "verbose": False,
+                "save_last": False,
+                # only keep last via LastCheckpointCallback; disable per-epoch top-k
+                "save_top_k": 0,
+                "monitor": monitor_metric,
+                "mode": "min",
             }
         }
         if hasattr(model, "monitor"):
-            print(f"Monitoring {model.monitor} as checkpoint metric.")
-            default_modelckpt_cfg["params"]["monitor"] = model.monitor
-            default_modelckpt_cfg["params"]["save_top_k"] = 3
+            default_modelckpt_cfg["params"]["save_top_k"] = 0
 
         if "modelcheckpoint" in lightning_config:
             modelckpt_cfg = lightning_config.modelcheckpoint
@@ -606,15 +656,25 @@ if __name__ == "__main__":
             modelckpt_cfg =  OmegaConf.create()
         modelckpt_cfg = OmegaConf.merge(default_modelckpt_cfg, modelckpt_cfg)
         print(f"Merged modelckpt-cfg: \n{modelckpt_cfg}")
-        if version.parse(pl.__version__) < version.parse('1.4.0'):
-            trainer_kwargs["checkpoint_callback"] = instantiate_from_config(modelckpt_cfg)
+
+        best_rec_ckpt_cfg = {
+            "target": "pytorch_lightning.callbacks.ModelCheckpoint",
+            "params": {
+                "dirpath": ckptdir,
+                "filename": "best-ep{epoch}-step{step}",
+                "monitor": monitor_metric,
+                "mode": "min",
+                "save_top_k": 1,
+                "save_last": False,
+            }
+        }
 
         # add callback which sets up log directory
         default_callbacks_cfg = {
             "setup_callback": {
                 "target": "main.SetupCallback",
                 "params": {
-                    "resume": opt.resume,
+                    "resume": opt.resume and not new_logdir_on_resume,
                     "now": now,
                     "logdir": logdir,
                     "ckptdir": ckptdir,
@@ -631,6 +691,12 @@ if __name__ == "__main__":
                     "clamp": True
                 }
             },
+            "last_checkpoint": {
+                "target": "main.LastCheckpointCallback",
+                "params": {
+                    "ckptdir": ckptdir
+                }
+            },
             "learning_rate_logger": {
                 "target": "main.LearningRateMonitor",
                 "params": {
@@ -642,9 +708,6 @@ if __name__ == "__main__":
                 "target": "main.CUDACallback"
             },
         }
-        if version.parse(pl.__version__) >= version.parse('1.4.0'):
-            default_callbacks_cfg.update({'checkpoint_callback': modelckpt_cfg})
-
         if "callbacks" in lightning_config:
             callbacks_cfg = lightning_config.callbacks
         else:
@@ -674,7 +737,10 @@ if __name__ == "__main__":
         elif 'ignore_keys_callback' in callbacks_cfg:
             del callbacks_cfg['ignore_keys_callback']
 
-        trainer_kwargs["callbacks"] = [instantiate_from_config(callbacks_cfg[k]) for k in callbacks_cfg]
+        callbacks = [instantiate_from_config(callbacks_cfg[k]) for k in callbacks_cfg]
+        callbacks.append(instantiate_from_config(modelckpt_cfg))
+        callbacks.append(instantiate_from_config(best_rec_ckpt_cfg))
+        trainer_kwargs["callbacks"] = callbacks
 
         trainer = Trainer.from_argparse_args(trainer_opt, **trainer_kwargs)
         trainer.logdir = logdir  ###

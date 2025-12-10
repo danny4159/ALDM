@@ -1,14 +1,16 @@
 model:
-  base_learning_rate: 2e-5
+  base_learning_rate: 2.0e-05
   target: taming.models.vqgan.VQModel
   params:
-    num_classes: 2
-    ckpt_path: null # pretrained/synthrad_stage1.ckpt # Stage1 체크포인트로 교체하세요
+    num_classes: 3
+    ckpt_path: VQ-GAN/pretrained/stage1.ckpt
+    ignore_keys:
+    - loss.discriminator
     stage: 2
     embed_dim: 4
     n_embed: 8192
     ddconfig:
-      double_z: False
+      double_z: false
       z_channels: 4
       resolution: 192
       in_channels: 1
@@ -22,18 +24,18 @@ model:
       num_res_blocks: 1
       attn_resolutions: []
       dropout: 0.0
-
     lossconfig:
       target: taming.modules.losses.vqperceptual.VQLPIPSWithDiscriminator
       params:
-        disc_conditional: False
-        disc_in_channels: 4
+        disc_conditional: false
+        disc_in_channels: 1
         disc_start: 0
         disc_weight: 0.8
         disc_factor: 0
         codebook_weight: 0
-        num_classes: 3 # 2개 모달리티 + fake class
-
+        perceptual_weight: 0
+        cycle_weight: 0
+        num_classes: 3
 data:
   target: main.DataModuleFromConfig
   params:
@@ -50,6 +52,7 @@ data:
         - 128
         - 128
         - 128
+        subject_prefix_mode: all
     validation:
       target: taming.data.synthrad.SynthRadVal
       params:
@@ -61,6 +64,7 @@ data:
         - 128
         - 128
         - 128
+        subject_prefix_mode: all
     test:
       target: taming.data.synthrad.SynthRadTest
       params:
@@ -72,3 +76,4 @@ data:
         - 128
         - 128
         - 128
+        subject_prefix_mode: all

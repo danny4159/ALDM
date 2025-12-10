@@ -8,7 +8,7 @@ from monai import transforms
 from monai.data import Dataset as MonaiDataset
 
 
-def get_transforms(phase="train", spatial_size=(144, 192, 144)):
+def get_transforms(phase="train", spatial_size=(144, 192, 144), apply_rand_crop=True, apply_foreground_crop=True):
     modalities = ["mr", "ct"]
 
     if phase == "train":
@@ -26,22 +26,34 @@ def get_transforms(phase="train", spatial_size=(144, 192, 144)):
             transforms.AddChanneld(keys=modalities, allow_missing_keys=True),
             transforms.Orientationd(keys=modalities, axcodes="RAS", allow_missing_keys=True),
             transforms.EnsureTyped(keys=modalities, allow_missing_keys=True),
-            transforms.CropForegroundd(keys=modalities, source_key="mr", margin=0, allow_missing_keys=True),
-            transforms.SpatialPadd(keys=modalities, spatial_size=spatial_size, allow_missing_keys=True),
-            transforms.RandSpatialCropd(keys=modalities, roi_size=spatial_size, random_center=True, random_size=False, allow_missing_keys=True),
+            transforms.CropForegroundd(keys=modalities, source_key="mr", margin=0, allow_missing_keys=True) if apply_foreground_crop else transforms.Compose([]),
+            transforms.SpatialPadd(keys=modalities, spatial_size=spatial_size, allow_missing_keys=True) if spatial_size is not None else transforms.Compose([]),
+            transforms.RandSpatialCropd(keys=modalities, roi_size=spatial_size, random_center=True, random_size=False, allow_missing_keys=True) if (apply_rand_crop and spatial_size is not None) else transforms.Compose([]),
             transforms.ScaleIntensityRangePercentilesd(keys=modalities, lower=0.5, upper=99.5, b_min=-1, b_max=1, allow_missing_keys=True),
             train_transforms if phase == "train" else transforms.Compose([])
         ]
     )
 
 
-def get_synthrad_dataset(data_path, phase="train", spatial_size=(144, 192, 144)):
-    transform = get_transforms(phase=phase, spatial_size=spatial_size)
+def get_synthrad_dataset(data_path, phase="train", spatial_size=(144, 192, 144), apply_rand_crop=True, apply_foreground_crop=True, subject_prefix_mode="all"):
+    transform = get_transforms(phase=phase, spatial_size=spatial_size, apply_rand_crop=apply_rand_crop, apply_foreground_crop=apply_foreground_crop)
 
     datalist = sorted(os.listdir(data_path))
 
+    prefix_mode = (subject_prefix_mode or "all").lower()
+    def _accept(name: str) -> bool:
+        if prefix_mode in ("all", "none"):
+            return True
+        if prefix_mode in ("1pa", "pa"):
+            return name.startswith("1PA")
+        if prefix_mode in ("1pc", "pc"):
+            return name.startswith("1PC")
+        return True
+
     data = []
     for subject in datalist:
+        if not _accept(subject):
+            continue
         sub_path = os.path.join(data_path, subject)
 
         if os.path.exists(sub_path) is False:
@@ -50,11 +62,11 @@ def get_synthrad_dataset(data_path, phase="train", spatial_size=(144, 192, 144))
         mr = os.path.join(sub_path, "mr.nii.gz")
         ct = os.path.join(sub_path, "ct.nii.gz")
 
-        data.append({"mr": mr, "ct": ct, "subject_id": subject, "path": mr})
+        data.append({"mr": mr, "ct": ct, "subject_id": subject, "path": mr, "target_path": ct})
 
     print(phase, " num of subject:", len(data))
 
-    return MonaiDataset(data=data, transform=transform)
+    return MonaiDataset(data=data, transform=transform) # 아하 이런식으로 경로를 data에 넣고, dataset을 만드는구나. 데이터 자체를 load하기보다 이게 가볍겠다.
 
 
 class SynthRadBase(Dataset):
@@ -80,23 +92,24 @@ class SynthRadBase(Dataset):
 
         item["target"] = item[target]
         item["target_class"] = torch.tensor(self.modalities.index(target))
+        item["source_class"] = torch.tensor(self.modalities.index(source))
 
         return item
 
 
 class SynthRadTrain(SynthRadBase):
-    def __init__(self, data_path, phase="train", source=None, target=None, spatial_size=(144, 192, 144)):
+    def __init__(self, data_path, phase="train", source=None, target=None, spatial_size=(144, 192, 144), apply_rand_crop=True, apply_foreground_crop=True, subject_prefix_mode="all"):
         super().__init__(source=source, target=target)
-        self.data = get_synthrad_dataset(data_path, phase, spatial_size)
+        self.data = get_synthrad_dataset(data_path, phase, spatial_size, apply_rand_crop=apply_rand_crop, apply_foreground_crop=apply_foreground_crop, subject_prefix_mode=subject_prefix_mode)
 
 
 class SynthRadVal(SynthRadBase):
-    def __init__(self, data_path, phase="val", source=None, target=None, spatial_size=(144, 192, 144)):
+    def __init__(self, data_path, phase="val", source=None, target=None, spatial_size=(144, 192, 144), apply_rand_crop=True, apply_foreground_crop=True, subject_prefix_mode="all"):
         super().__init__(source=source, target=target)
-        self.data = get_synthrad_dataset(data_path, phase, spatial_size)
+        self.data = get_synthrad_dataset(data_path, phase, spatial_size, apply_rand_crop=apply_rand_crop, apply_foreground_crop=apply_foreground_crop, subject_prefix_mode=subject_prefix_mode)
 
 
 class SynthRadTest(SynthRadBase):
-    def __init__(self, data_path, phase="test", source=None, target=None, spatial_size=(144, 192, 144)):
+    def __init__(self, data_path, phase="test", source=None, target=None, spatial_size=(144, 192, 144), apply_rand_crop=True, apply_foreground_crop=True, subject_prefix_mode="all"):
         super().__init__(source=source, target=target)
-        self.data = get_synthrad_dataset(data_path, phase, spatial_size)
+        self.data = get_synthrad_dataset(data_path, phase, spatial_size, apply_rand_crop=apply_rand_crop, apply_foreground_crop=apply_foreground_crop, subject_prefix_mode=subject_prefix_mode)

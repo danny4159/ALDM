@@ -273,14 +273,16 @@ class VectorQuantizer2(nn.Module):
         assert rescale_logits==False, "Only for interface compatible with Gumbel"
         assert return_logits==False, "Only for interface compatible with Gumbel"
         # reshape z -> (batch, height, width, depth, channel) and flatten
-        z = rearrange(z, 'b c h w d -> b h w d c').contiguous()
-        z_flattened = z.view(-1, self.e_dim)
+        z = rearrange(z, 'b c h w d -> b h w d c').contiguous() # b h w d c
+        z_flattened = z.view(-1, self.e_dim) # (B, H, W, D, C) -> (B*H*W*D, C)
+        
         # distances from z to embeddings e_j (z - e)^2 = z^2 + e^2 - 2 e * z
-
+        # codebook의 embedding들과 거리 계산
         d = torch.sum(z_flattened ** 2, dim=1, keepdim=True) + \
             torch.sum(self.embedding.weight**2, dim=1) - 2 * \
             torch.einsum('bd,dn->bn', z_flattened, rearrange(self.embedding.weight, 'n d -> d n'))
 
+        # 가장 가까운 codebook entry 선택
         min_encoding_indices = torch.argmin(d, dim=1)
         z_q = self.embedding(min_encoding_indices).view(z.shape)
         perplexity = None
@@ -298,6 +300,7 @@ class VectorQuantizer2(nn.Module):
         z_q = z + (z_q - z).detach()
 
         # reshape back to match original input shape
+        # code book으로 표현된 z_q를 원래 형태로 변환
         z_q = rearrange(z_q, 'b h w d c -> b c h w d').contiguous()
 
         if self.remap is not None:
