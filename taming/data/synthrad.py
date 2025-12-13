@@ -41,14 +41,43 @@ def get_synthrad_dataset(data_path, phase="train", spatial_size=(144, 192, 144),
     datalist = sorted(os.listdir(data_path))
 
     prefix_mode = (subject_prefix_mode or "all").lower()
+
     def _accept(name: str) -> bool:
         if prefix_mode in ("all", "none"):
             return True
-        if prefix_mode in ("1pa", "pa"):
-            return name.startswith("1PA")
-        if prefix_mode in ("1pc", "pc"):
-            return name.startswith("1PC")
-        return True
+
+        # dataset-specific defaults for seen/unseen splits
+        data_path_lower = data_path.lower()
+        if "headneck" in data_path_lower:
+            seen_prefixes = ["1HNA"]
+            unseen_prefixes = ["1HNC", "1HND"]
+        else:  # pelvis (default)
+            seen_prefixes = ["1PA"]
+            unseen_prefixes = ["1PC"]
+
+        # map high-level modes to prefixes
+        if prefix_mode in ("seen",):
+            prefixes = seen_prefixes
+        elif prefix_mode in ("unseen",):
+            prefixes = unseen_prefixes
+        elif prefix_mode in ("1pa", "pa"):
+            prefixes = ["1PA"]
+        elif prefix_mode in ("1pc", "pc"):
+            prefixes = ["1PC"]
+        elif prefix_mode in ("1hna", "hna"):
+            prefixes = ["1HNA"]
+        elif prefix_mode in ("1hnc", "hnc"):
+            prefixes = ["1HNC"]
+        elif prefix_mode in ("1hnd", "hnd"):
+            prefixes = ["1HND"]
+        else:
+            prefixes = []
+
+        if not prefixes:
+            return True
+
+        name_upper = name.upper()
+        return any(name_upper.startswith(p.upper()) for p in prefixes)
 
     data = []
     for subject in datalist:

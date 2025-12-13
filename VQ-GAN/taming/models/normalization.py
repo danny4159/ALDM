@@ -24,7 +24,7 @@ class SPADE(nn.Module):
         self.mlp_gamma = nn.Conv3d(nhidden, norm_nc, kernel_size=kernel_size, padding=pw)
         self.mlp_beta = nn.Conv3d(nhidden, norm_nc, kernel_size=kernel_size, padding=pw)
 
-    def forward(self, x):
+    def forward(self, x): # 와 그냥 x로 다 바꾸네..
         normalized = self.param_free_norm(x)
         x = F.interpolate(x, size=x.size()[2:], mode='nearest')
         actv = self.mlp_shared(x)
@@ -35,7 +35,7 @@ class SPADE(nn.Module):
         out = normalized * (1 + gamma) + beta
         return out
     
-class SPADE_Multimodal(nn.Module):
+class SPADE_Multimodal(nn.Module): # 클래스별로 SPADE를 별도로 두는 구조.
     def __init__(self, num_classes, norm_nc, label_nc, kernel_size, norm_type='instance'):
         super().__init__()
         self.spades = nn.ModuleList([SPADE(norm_nc, label_nc, kernel_size, norm_type) for _ in range(num_classes)])

@@ -44,36 +44,39 @@ data:
     train:
       target: taming.data.synthrad.SynthRadTrain
       params:
-        data_path: data/synthrad2023_mr-ct_pelvis/train
+        # data_path: data/synthrad2023_mr-ct_pelvis/train
+        data_path: data/synthrad2025_mr-ct_headneck/train
         phase: train
         source: mr
         target: ct
+        subject_prefix_mode: seen # all|seen|unseen|1PA|1PC|1HNA|1HNC|1HND
         spatial_size:
         - 128
         - 128
         - 128
-        subject_prefix_mode: all
     validation:
       target: taming.data.synthrad.SynthRadVal
       params:
-        data_path: data/synthrad2023_mr-ct_pelvis/val
+        # data_path: data/synthrad2023_mr-ct_pelvis/val
+        data_path: data/synthrad2025_mr-ct_headneck/val
         phase: val
         source: mr
         target: ct
+        subject_prefix_mode: seen # all|seen|unseen|1PA|1PC|1HNA|1HNC|1HND
         spatial_size:
         - 128
         - 128
         - 128
-        subject_prefix_mode: all
     test:
       target: taming.data.synthrad.SynthRadTest
       params:
-        data_path: data/synthrad2023_mr-ct_pelvis/test
+        # data_path: data/synthrad2023_mr-ct_pelvis/test
+        data_path: data/synthrad2025_mr-ct_headneck/test
         phase: test
         source: mr
         target: ct
+        subject_prefix_mode: unseen # all|seen|unseen|1PA|1PC|1HNA|1HNC|1HND
         spatial_size:
         - 128
         - 128
         - 128
-        subject_prefix_mode: all

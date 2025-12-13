@@ -2,7 +2,8 @@ model:
   base_learning_rate: 1.0e-05
   target: ldm.models.diffusion.ddpm.LatentDiffusion
   params:
-    ckpt_path: logs/synthrad-ldm-vq-4/Ver2_Stage2Ver1Epo886/2025-12-09T17-33-27/checkpoints/best-epepoch=199-stepstep=11199.ckpt
+    ckpt_path: null
+    # ckpt_path: logs/synthrad-ldm-vq-4/Ver2_Stage2Ver1Epo886/2025-12-09T17-33-27/checkpoints/best-epepoch=199-stepstep=11199.ckpt
     linear_start: 0.0015
     linear_end: 0.0195
     num_timesteps_cond: 1
@@ -19,7 +20,7 @@ model:
       target: ldm.modules.diffusionmodules.openaimodel.UNetModel
       params:
         num_classes: 2
-        image_size: 32
+        image_size: 32 # 실제로 안쓰임.
         in_channels: 12
         out_channels: 4
         model_channels: 128
@@ -38,7 +39,8 @@ model:
       target: ldm.models.vqgan.VQModel
       params:
         num_classes: 3
-        ckpt_path: logs/synthrad_vqgan_stage2/Ver1_TrainOnAuthorCkptStage1_IgnoreDisc/2025-12-05T00-25-15/checkpoints/best-epepoch=886-stepstep=98456-valrecval_rec_loss=0.0909.ckpt
+        # ckpt_path: logs/synthrad_vqgan_stage2/Ver1_TrainOnAuthorCkptStage1_IgnoreDisc/2025-12-05T00-25-15/checkpoints/best-epepoch=886-stepstep=98456-valrecval_rec_loss=0.0909.ckpt
+        ckpt_path: logs/synthrad_vqgan_stage2/Ver1_TrainOnAuthorCkptStage1_IgnoreDisc_HeadNeckDataset_TrainSeen_InferUnseen/2025-12-11T06-28-30/checkpoints/best-epepoch=793-stepstep=50021-valrecval_rec_loss=0.0894.ckpt
         stage: 2
         embed_dim: 4
         n_embed: 8192
@@ -68,7 +70,8 @@ data:
     train:
       target: taming.data.synthrad.SynthRadTrain
       params:
-        data_path: data/synthrad2023_mr-ct_pelvis/train
+        # data_path: data/synthrad2023_mr-ct_pelvis/train
+        data_path: data/synthrad2025_mr-ct_headneck/train
         phase: train
         source: mr
         target: ct
@@ -76,11 +79,12 @@ data:
         - 128
         - 128
         - 128
-        subject_prefix_mode: all
+        subject_prefix_mode: seen # all|seen|unseen|1PA|1PC|1HNA|1HNC|1HND
     validation:
       target: taming.data.synthrad.SynthRadVal
       params:
-        data_path: data/synthrad2023_mr-ct_pelvis/val
+        # data_path: data/synthrad2023_mr-ct_pelvis/val
+        data_path: data/synthrad2025_mr-ct_headneck/val
         phase: val
         source: mr
         target: ct
@@ -88,11 +92,12 @@ data:
         - 128
         - 128
         - 128
-        subject_prefix_mode: all
+        subject_prefix_mode: unseen # all|seen|unseen|1PA|1PC|1HNA|1HNC|1HND
     test:
       target: taming.data.synthrad.SynthRadTest
       params:
-        data_path: data/synthrad2023_mr-ct_pelvis/test
+        # data_path: data/synthrad2023_mr-ct_pelvis/test
+        data_path: data/synthrad2025_mr-ct_headneck/test
         phase: test
         source: mr
         target: ct
@@ -100,7 +105,7 @@ data:
         - 128
         - 128
         - 128
-        subject_prefix_mode: all
+        subject_prefix_mode: unseen # all|seen|unseen|1PA|1PC|1HNA|1HNC|1HND
 lightning:
   callbacks:
     image_logger:
@@ -116,9 +121,12 @@ inference:
   sliding_window:
     enabled: false
     roi_size:
-    - 192
-    - 192
-    - 192
+    - 128
+    - 128
+    - 128
+    # - 192
+    # - 192
+    # - 192
     overlap: 0.25
     mode: gaussian
     batch_size: 1

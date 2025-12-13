@@ -43,7 +43,7 @@ data:
       params:
         data_path: data/synthrad2023_mr-ct_pelvis/train
         phase: train
-        subject_prefix_mode: all
+        subject_prefix_mode: all # all|seen|unseen|1PA|1PC|1HNA|1HNC|1HND
         spatial_size:
         - 96
         - 96
@@ -53,7 +53,7 @@ data:
       params:
         data_path: data/synthrad2023_mr-ct_pelvis/val
         phase: val
-        subject_prefix_mode: all
+        subject_prefix_mode: all # all|seen|unseen|1PA|1PC|1HNA|1HNC|1HND
         spatial_size:
         - 96
         - 96
@@ -63,7 +63,7 @@ data:
       params:
         data_path: data/synthrad2023_mr-ct_pelvis/test
         phase: test
-        subject_prefix_mode: all
+        subject_prefix_mode: all # all|seen|unseen|1PA|1PC|1HNA|1HNC|1HND
         spatial_size:
         - 96
         - 96

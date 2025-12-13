@@ -281,9 +281,9 @@ class DDPM(pl.LightningModule):
 
         return loss
 
-    def p_losses(self, x_start, cond, t, noise=None):
+    def p_losses(self, x_start, cond, t, noise=None): # x_start: target latents, cond: z_src_cat(source latents + spade target-like latents)
         noise = default(noise, lambda: torch.randn_like(x_start))
-        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
+        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise) # target latents에 노이즈 추가
         model_output = self.apply_model(x_noisy, t, cond)
 
         loss_dict = {}
@@ -538,7 +538,7 @@ class LatentDiffusion(DDPM):
         return edge_dist
 
     @torch.no_grad()
-    def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
+    def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False, # 데이터 처리
                   cond_key=None, return_original_cond=False, bs=None):
         x_src = batch["source"]
         x_tgt = batch["target"]
@@ -556,11 +556,11 @@ class LatentDiffusion(DDPM):
         z_srctgt = self.first_stage_model.spade(z_src, y)
         z_tgt = self.encode_first_stage(x_tgt)
 
-        z_src = self.get_first_stage_encoding(z_src)
+        z_src = self.get_first_stage_encoding(z_src) # 그대로 그냥 나와. 어떤 경우에 sample 돼서 나올까.
         z_srctgt = self.get_first_stage_encoding(z_srctgt)
         z_tgt = self.get_first_stage_encoding(z_tgt)
 
-        z_src = torch.cat([z_src, z_srctgt], dim=1)
+        z_src = torch.cat([z_src, z_srctgt], dim=1) # source latents + spade target-like latents
 
         z_src = z_src.detach()
         z_tgt = z_tgt.detach()
@@ -590,8 +590,8 @@ class LatentDiffusion(DDPM):
         loss = self(x, c)
         return loss
 
-    def forward(self, x, c, *args, **kwargs):
-        t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()
+    def forward(self, x, c, *args, **kwargs): # x: target latents, c: z_src_cat(source latents + spade target-like latents)
+        t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long() # t를 x.shape[0]개만큼 랜덤하게 선택.
         if self.model.conditioning_key is not None:
             assert c is not None
             if self.cond_stage_trainable:
@@ -633,10 +633,10 @@ class LatentDiffusion(DDPM):
         kl_prior = normal_kl(mean1=qt_mean, logvar1=qt_log_variance, mean2=0.0, logvar2=0.0)
         return mean_flat(kl_prior) / np.log(2.0)
 
-    def p_losses(self, x_start, cond, t, noise=None):
+    def p_losses(self, x_start, cond, t, noise=None): # x_start: target latents, cond: z_src_cat(source latents + spade target-like latents)
         noise = default(noise, lambda: torch.randn_like(x_start))
-        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
-        model_output = self.apply_model(x_noisy, t, cond)
+        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise) # target latents에 노이즈 추가
+        model_output = self.apply_model(x_noisy, t, cond) # 노이즈가 추가된 target latents와 cond(z_src_cat)를 모델에 통과시켜 예측값 얻음
 
         loss_dict = {}
         prefix = 'train' if self.training else 'val'
@@ -648,10 +648,12 @@ class LatentDiffusion(DDPM):
         else:
             raise NotImplementedError()
 
-        loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3, 4])
+        loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3, 4]) # target과 model_output의 l2 loss
         loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
 
         # ensure logvar is on the same device as targets before indexing
+        # t스탭마다 얼마나 variance를 줄 것인지 결정하는 부분
+        # TODO: NLL 개념에 대해서 더 공부 필요
         logvar_t = self.logvar.to(x_start.device)[t]
         loss = loss_simple / torch.exp(logvar_t) + logvar_t
         # loss = loss_simple / torch.exp(self.logvar) + self.logvar
@@ -661,6 +663,8 @@ class LatentDiffusion(DDPM):
 
         loss = self.l_simple_weight * loss.mean()
 
+        # ELBO term 보정 (variational lower bound)
+        # TODO: 확률과 분포에 대해서, ELBO 개념에 대해 더 공부 필요
         loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3, 4))
         loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
         loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
@@ -950,7 +954,7 @@ class DiffusionWrapper(pl.LightningModule):
         self.conditioning_key = conditioning_key
         assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm']
 
-    def forward(self, x, t, c_concat = None, c_crossattn = None):
+    def forward(self, x, t, c_concat = None, c_crossattn = None): # x: noisy latents, t: time step, c_concat: source latent + spade target-like latent, c_crossattn: cross-attention condition
         if self.conditioning_key is None:
             out = self.diffusion_model(x, t)
         elif self.conditioning_key == 'concat':
@@ -961,7 +965,7 @@ class DiffusionWrapper(pl.LightningModule):
             out = self.diffusion_model(x, t, context=cc)
         elif self.conditioning_key == 'hybrid':
             xc = torch.cat([x, c_concat], dim=1)
-            out = self.diffusion_model(xc, t, y=c_crossattn)
+            out = self.diffusion_model(xc, t, y=c_crossattn) # xc: noisy latents + source latent + spade target-like latent, y: cross-attention condition
         elif self.conditioning_key == 'adm':
             cc = c_crossattn[0]
             out = self.diffusion_model(x, t, y=cc)

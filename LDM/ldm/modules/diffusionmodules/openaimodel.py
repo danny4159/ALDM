@@ -261,16 +261,16 @@ class ResBlock(TimestepBlock):
             h = in_conv(h)
         else:
             h = self.in_layers(x)
-        emb_out = self.emb_layers(emb).type(h.dtype)
-        while len(emb_out.shape) < len(h.shape):
-            emb_out = emb_out[..., None]
+        emb_out = self.emb_layers(emb).type(h.dtype) # emd의 channel을 x의 channel과 맞게. # emb: [batch, 512] -> emb_out: [batch, 128]
+        while len(emb_out.shape) < len(h.shape): # broadcast
+            emb_out = emb_out[..., None] # emb_out: [batch, channels, 1, 1, 1]
         if self.use_scale_shift_norm:
             out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
             scale, shift = th.chunk(emb_out, 2, dim=1)
             h = out_norm(h) * (1 + scale) + shift
             h = out_rest(h)
         else:
-            h = h + emb_out
+            h = h + emb_out # broadcasted addition # h: [batch, channels, 16, 16, 16] emb_out: [batch, channels, 1, 1, 1]
             h = self.out_layers(h)
         return self.skip_connection(x) + h
 
@@ -720,12 +720,12 @@ class UNetModel(nn.Module):
             self.num_classes is not None
         ), "must specify y if and only if the model is class-conditional"
         hs = []
-        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
-        emb = self.time_embed(t_emb)
+        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False) #timesteps: [batch,] -> t_emb: [batch, 512]
+        emb = self.time_embed(t_emb) # 각 batch에 대한 time을 embedding  # [batch, 512]
 
         if self.num_classes is not None:
             assert y.shape == (x.shape[0],)
-            emb = emb + self.label_emb(y)
+            emb = emb + self.label_emb(y) # y: [batch,] -> self.label_emb(y) = [batch, 512]
 
         h = x.type(self.dtype)
         for module in self.input_blocks:
